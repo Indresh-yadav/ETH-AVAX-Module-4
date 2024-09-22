@@ -1,102 +1,156 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.25;
 
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+contract DegenToken {
+    string public name;
+    string public symbol;
+    uint8 public decimals;
+    uint256 public totalSupply;
 
-contract DegenToken is ERC20, Ownable {
-
-    uint256 public tokenPrice = 1;
+    mapping(address => uint256) private balances;
+    mapping(address => mapping(address => uint256)) private allowances;
 
     struct ItemRedeemed {
-        uint256 quantity;          
-        uint256 tokensRedeemed;  
+        string itemName;
+        uint256 quantity;
+        uint256 tokensRedeemed;
     }
-    
-
-    constructor() ERC20("Degen", "DGN") Ownable(msg.sender) {}
-
-    event TokensRedeemed(address indexed user, uint256 quantity, uint256 tokensRedeemed);
 
     mapping(address => ItemRedeemed[]) private ItemRedeemeds;
 
-    function mintTokens(address to, uint256 quantity) public onlyOwner { 
-        require(to != address(0), "Minting to zero address is not possible");
-        require(quantity > 0, "Mint quantity must be greater than zero");
-        _mint(to, quantity);
+    address public owner;
+
+    event Mint(address indexed to, uint256 value);
+    event Burn(address indexed from, uint256 value);
+    event Transfer(address indexed from, address indexed to, uint256 value);
+    event Approval(address indexed owner, address indexed spender, uint256 value);
+    event Redeem(address indexed from, string itemName);
+
+    string[] public items; 
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Only the owner can call this function.");
+        _;
     }
 
+    constructor() {
+        name = "Degen Token"; 
+        symbol = "DGN";
+        decimals = 18;
+        totalSupply = 0;
+        owner = msg.sender;
 
-    function checkTokenBalance(address account) public view returns (uint256) { 
-        require(account != address(0), "You eneterd zero address, that is not possible");
-        return balanceOf(account);
+        items.push("Item 1");
+        items.push("Item 2");
+        items.push("Item 3");
+        items.push("Item 4");
     }
 
-    function transferTokens(address from, address to, uint256 quantity) public { 
-        require(from != address(0), "Transfer from zero address is not allowed");
-        require(to != address(0), "Transfer to zero address is not allowed");
-
-        if (from == _msgSender()) {
-            _transfer(from, to, quantity);
-        } else {
-            uint256 currentAllowance = allowance(from, _msgSender());
-            require(currentAllowance >= quantity, "Transfer quantity exceeds allowance");
-            _approve(from, _msgSender(), currentAllowance - quantity);
-            _transfer(from, to, quantity);
-        }
+    function balanceOf(address account) external view returns (uint256) {
+        return balances[account];
     }
 
-    function burnTokens(uint256 quantity) public { 
-        require(quantity > 0, "The burn quantity needs to exceed zero.");
-        _burn(_msgSender(), quantity);
-    }
+    function redeem() external returns (string memory) {
+        require(balances[msg.sender] > 0, "Insufficient balance to redeem.");
+        require(items.length > 0, "No items available for redemption.");
 
-    function redeemTokens(uint256 quantity) public { 
-        require(quantity > 0, "The quantity for redemption must be greater than zero.");
-        uint256 cost = quantity * tokenPrice;
-        require(balanceOf(_msgSender()) >= cost, "Insufficient token balance");
+        uint256 randomIndex = uint256(keccak256(abi.encodePacked(block.timestamp, block.difficulty, msg.sender))) % items.length;
+        string memory chosenItem = items[randomIndex];
 
-        _burn(_msgSender(), cost);
+        uint256 redemptionAmount = 100; 
+        require(balances[msg.sender] >= redemptionAmount, "Insufficient balance to redeem the item.");
+        balances[msg.sender] -= redemptionAmount;
 
-        ItemRedeemeds[_msgSender()].push(ItemRedeemed({
-            quantity: quantity,
-            tokensRedeemed: cost
+        // Track redeemed item
+        ItemRedeemeds[msg.sender].push(ItemRedeemed({
+            itemName: chosenItem,
+            quantity: 1,
+            tokensRedeemed: redemptionAmount
         }));
 
-        emit TokensRedeemed(_msgSender(), quantity, cost);
+        emit Redeem(msg.sender, chosenItem);
+
+        return chosenItem;
+    }
+
+    function mint(address to, uint256 amount) external onlyOwner {
+        totalSupply += amount;
+        balances[to] += amount;
+
+        emit Mint(to, amount);
+        emit Transfer(address(0), to, amount);
+    }
+
+    function burn(uint256 amount) external {
+        require(amount <= balances[msg.sender], "Insufficient balance.");
+
+        balances[msg.sender] -= amount;
+        totalSupply -= amount;
+
+        emit Burn(msg.sender, amount);
+        emit Transfer(msg.sender, address(0), amount);
+    }
+
+    function approve(address spender, uint256 amount) external returns (bool) {
+        allowances[msg.sender][spender] = amount;
+
+        emit Approval(msg.sender, spender, amount);
+        return true;
+    }
+
+    function transfer(address recipient, uint256 amount) external returns (bool) {
+        require(amount <= balances[msg.sender], "Insufficient balance.");
+
+        balances[msg.sender] -= amount;
+        balances[recipient] += amount;
+
+        emit Transfer(msg.sender, recipient, amount);
+        return true;
+    }
+
+    function transferFrom(address sender, address recipient, uint256 amount) external returns (bool) {
+        require(amount <= balances[sender], "Insufficient balance.");
+        require(amount <= allowances[sender][msg.sender], "Insufficient allowance.");
+
+        balances[sender] -= amount;
+        balances[recipient] += amount;
+        allowances[sender][msg.sender] -= amount;
+
+        emit Transfer(sender, recipient, amount);
+        return true;
     }
 
     function printRedeemedTokensList(address account) public view returns (string memory) { 
         require(account != address(0), "Query for zero address not possible");
-        ItemRedeemed[] memory items = ItemRedeemeds[account];
-        require(items.length > 0, "No redeemed tokens found");
+        ItemRedeemed[] memory itemsRedeemed = ItemRedeemeds[account];
+        require(itemsRedeemed.length > 0, "No redeemed tokens found");
 
         string memory redemptionDetails = "";
-        for (uint256 index = 0; index < items.length; index++) {
+        for (uint256 index = 0; index < itemsRedeemed.length; index++) {
             redemptionDetails = string(abi.encodePacked(redemptionDetails,
             "Redemption Item ", uintToString(index + 1), ": ",
-            "Quantity Redeemed: ", uintToString(items[index].quantity),
-            "Tokens Redeemed: ", uintToString(items[index].tokensRedeemed),"\n"));
+            "Quantity Redeemed: ", uintToString(itemsRedeemed[index].quantity),
+            " Tokens Redeemed: ", uintToString(itemsRedeemed[index].tokensRedeemed), "\n"));
         }
         return redemptionDetails;
     }
 
-    function uintToString(uint256 v) internal pure returns (string memory) { 
-        if (v == 0) {
+    function uintToString(uint256 value) internal pure returns (string memory) {
+        if (value == 0) {
             return "0";
         }
-        uint256 numDigits;
-        uint256 tempNum = v;
-        while (tempNum != 0) {
-            numDigits++;
-            tempNum /= 10;
+        uint256 temp = value;
+        uint256 digits;
+        while (temp != 0) {
+            digits++;
+            temp /= 10;
         }
-        bytes memory digitBytes = new bytes(numDigits);
-        while (v != 0) {
-            numDigits -= 1;
-            digitBytes[numDigits] = bytes1(uint8(48 + uint256(v % 10)));
-            v /= 10;
+        bytes memory buffer = new bytes(digits);
+        while (value != 0) {
+            digits -= 1;
+            buffer[digits] = bytes1(uint8(48 + uint256(value % 10)));
+            value /= 10;
         }
-        return string(digitBytes);
+        return string(buffer);
     }
 }
